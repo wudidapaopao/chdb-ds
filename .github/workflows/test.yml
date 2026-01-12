@@ -49,14 +49,19 @@ jobs:
         pip install -r requirements-dev.txt
 
     - name: Download and install custom chdb wheel
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # TODO: Fill in your custom chdb wheel URL below
+        # Download artifact from chdb repo using gh CLI
         # Install AFTER dependencies to override PyPI chdb
-        CHDB_WHEEL_URL="https://github.com/chdb-io/chdb/actions/runs/20912362858/artifacts/5095846885"
-        wget -O chdb.zip "$CHDB_WHEEL_URL"
+        RUN_ID="20912362858"
+        ARTIFACT_NAME="chdb-ubuntu-2204-x86_64-cp312-cp312-linux_gnu"
         rm -rf chdb_artifacts
         mkdir -p chdb_artifacts
-        unzip -q chdb.zip -d chdb_artifacts
+        gh run download "$RUN_ID" -R chdb-io/chdb -n "$ARTIFACT_NAME" -D chdb_artifacts || {
+          echo "Failed to download artifact. It may have expired (90 days) or require different permissions."
+          exit 1
+        }
         WHEEL_PATH=$(find chdb_artifacts -type f -name "*.whl" | head -n 1)
         if [ -z "$WHEEL_PATH" ]; then
           echo "No .whl found in downloaded artifact"
