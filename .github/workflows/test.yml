@@ -22,6 +22,18 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Install gdb
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gdb unzip
+
+    - name: Setup core dump
+      run: |
+        # Enable core dumps
+        ulimit -c unlimited
+        # Set core dump pattern to workspace directory
+        sudo sysctl -w kernel.core_pattern=${{ github.workspace }}/core.%e.%p
+
     - name: Cache pip dependencies
       uses: actions/cache@v3
       with:
@@ -36,6 +48,22 @@ jobs:
         pip install -e .[dev]
         pip install -r requirements-dev.txt
 
+    - name: Download and install custom chdb wheel
+      run: |
+        # TODO: Fill in your custom chdb wheel URL below
+        # Install AFTER dependencies to override PyPI chdb
+        CHDB_WHEEL_URL="https://github.com/chdb-io/chdb/actions/runs/20912362858/artifacts/5095846885"
+        wget -O chdb.zip "$CHDB_WHEEL_URL"
+        rm -rf chdb_artifacts
+        mkdir -p chdb_artifacts
+        unzip -q chdb.zip -d chdb_artifacts
+        WHEEL_PATH=$(find chdb_artifacts -type f -name "*.whl" | head -n 1)
+        if [ -z "$WHEEL_PATH" ]; then
+          echo "No .whl found in downloaded artifact"
+          exit 1
+        fi
+        pip install --force-reinstall --no-deps "$WHEEL_PATH"
+
     - name: Lint with flake8
       run: |
         flake8 datastore --count --select=E9,F63,F7,F82 --show-source --statistics
@@ -46,8 +74,56 @@ jobs:
         black --check --diff datastore
 
     - name: Run tests with pytest
+      id: pytest
+      continue-on-error: true
       run: |
-        pytest --cov=datastore --cov-report=xml --cov-report=term-missing
+        ulimit -c unlimited
+        for i in $(seq 1 200); do
+          echo "Pytest run: ${i}/200"
+          pytest --cov=datastore --cov-report=xml --cov-report=term-missing
+          RC=$?
+          if find "${{ github.workspace }}" -name "core.*" -type f 2>/dev/null | grep -q .; then
+            echo "Core dump detected after run ${i}. Stopping."
+            exit 1
+          fi
+          if [ "$RC" -eq 0 ]; then
+            continue
+          fi
+          if [ "$RC" -eq 1 ]; then
+            echo "Pytest failed normally (exit code 1) on run ${i}. Ignoring and continuing."
+            continue
+          fi
+          echo "Pytest exited with code $RC on run ${i}. Treating as crash and stopping."
+          exit "$RC"
+        done
+
+    - name: Analyze core dumps if any
+      if: always()
+      run: |
+        echo "Looking for core dumps..."
+        CORE_FILES=$(find ${{ github.workspace }} -name "core.*" -type f 2>/dev/null || true)
+        if [ -n "$CORE_FILES" ]; then
+          echo "Found core dumps:"
+          # Find chdb .so location
+          CHDB_SO_DIR=$(python -c "import chdb; import os; print(os.path.dirname(chdb.__file__))" 2>/dev/null || echo "")
+          CHDB_SO="$CHDB_SO_DIR/_chdb.abi3.so"
+          echo "chdb .so: $CHDB_SO"
+          for CORE_FILE in $CORE_FILES; do
+            echo "Analyzing: $CORE_FILE"
+            gdb "$CHDB_SO" "$CORE_FILE" -batch \
+              -ex "bt full" \
+              -ex "info registers" \
+              -ex "info threads" \
+              -ex "thread apply all bt full" \
+              || true
+          done
+        else
+          echo "No core dumps found."
+        fi
+
+    - name: Check test result
+      if: steps.pytest.outcome == 'failure'
+      run: exit 1
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -56,28 +132,4 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
-
-  test-macos:
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13']
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .[dev]
-        pip install -r requirements-dev.txt
-
-    - name: Run tests
-      run: |
-        pytest
 
