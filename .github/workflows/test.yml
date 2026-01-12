@@ -54,7 +54,7 @@ jobs:
       run: |
         # Download artifact from chdb repo using gh CLI
         # Install AFTER dependencies to override PyPI chdb
-        RUN_ID="20912362858"
+        RUN_ID="20920572386"
         ARTIFACT_NAME="chdb-artifacts-linux-x86_64"
         rm -rf chdb_artifacts
         mkdir -p chdb_artifacts
