@@ -87,7 +87,7 @@ jobs:
           echo "Pytest run: ${i}/200"
           pytest --cov=datastore --cov-report=xml --cov-report=term-missing
           RC=$?
-          if find "${{ github.workspace }}" -name "core.*" -type f 2>/dev/null | grep -q .; then
+          if ls ${{ github.workspace }}/core.* 1>/dev/null 2>&1; then
             echo "Core dump detected after run ${i}. Stopping."
             exit 1
           fi
@@ -106,7 +106,7 @@ jobs:
       if: always()
       run: |
         echo "Looking for core dumps..."
-        CORE_FILES=$(find ${{ github.workspace }} -name "core.*" -type f 2>/dev/null || true)
+        CORE_FILES=$(ls ${{ github.workspace }}/core.* 2>/dev/null || true)
         if [ -n "$CORE_FILES" ]; then
           echo "Found core dumps:"
           # Find chdb .so location
